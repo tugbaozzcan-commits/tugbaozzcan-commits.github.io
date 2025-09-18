@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Atık Sayaç</title>
+  <style>
+    :root{
+      --gap: 10px;
+      --btn-pad-v: 10px;
+      --btn-pad-h: 12px;
+      --btn-font: 15px;  /* küçük-orta */
+      --radius: 12px;
+      --press-scale: .97;
+    }
+    *{box-sizing:border-box}
+    body{
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      margin:0; padding:16px 14px 28px;
+      background:#fafafa; color:#111;
+    }
+    header{display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px;}
+    h1{font-size:18px; margin:0;}
+    .top-actions{display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end}
+    button{
+      border:1px solid #d0d0d0; background:#fff; color:#111;
+      padding: var(--btn-pad-v) var(--btn-pad-h);
+      border-radius: var(--radius);
+      font-size: var(--btn-font);
+      line-height:1.2;
+      cursor:pointer;
+      touch-action:manipulation;
+      transition: transform 80ms ease, filter 80ms ease, box-shadow 120ms ease;
+    }
+    button.primary{ background:#0a7d37; border-color:#0a7d37; color:#fff; font-weight:600; }
+    button.secondary{ background:#fff; color:#0a7d37; border-color:#0a7d37; font-weight:600; }
+    button.ghost{ background:#fff; color:#333; border-color:#c8c8c8; }
+    button:disabled{opacity:.5; cursor:not-allowed}
+
+    .pressed{ transform: scale(var(--press-scale)); filter: brightness(0.92); }
+
+    /* Kategori grid */
+    #button-container{
+      display:grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--gap);
+    }
+    .cat-btn{
+      position: relative;
+      min-height: 54px;
+      padding: 12px 10px;
+      font-weight: 700;
+      word-break: break-word;
+      border-radius: var(--radius);
+      color:#fff; /* renkli zeminlerde kontrast için */
+      border: 1px solid transparent;
+    }
+    .cat-btn .label{
+      display:block;
+      text-align:center;
+    }
+    .badge{
+      position:absolute; top:6px; right:6px;
+      min-width: 22px; height: 22px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.85);
+      color:#111;
+      font-size: 13px; font-weight:700;
+      display:flex; align-items:center; justify-content:center;
+      box-shadow: 0 1px 2px rgba(0,0,0,.1);
+    }
+
+    /* Alt kısım */
+    .bottom{ position: sticky; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(180deg, rgba(250,250,250,0.4) 0%, #fafafa 30%);
+      padding-top: 14px; margin-top: 16px; }
+    .actions{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+    #result{
+      margin-top:12px; background:#fff; border:1px solid #e5e5e5;
+      border-radius: var(--radius); padding:12px; white-space:pre-line; font-size:15px;
+    }
+
+    /* Hareketi azalt tercihine saygı */
+    @media (prefers-reduced-motion: reduce){
+      button{ transition: none; }
+      .pressed{ transform: none; filter:none; }
+    }
+    @media (max-width: 380px){
+      :root{ --btn-font: 14px; }
+      .cat-btn{ min-height: 48px; }
+    }
+  </style>
+</head>
+<body>
+  <noscript style="display:block;padding:12px;margin:10px 0;border:1px solid #e0e0e0;border-radius:8px;background:#fff3cd;color:#664d03;">
+    Bu dosya önizleme modunda veya JavaScript kapalı olabilir. Lütfen Safari/Chrome ile açın ya da bir linke yükleyip oradan açın.
+  </noscript>
+  <header>
+    <h1>Atık Sayaç</h1>
+    <div class="top-actions">
+      <button id="undo-btn" class="ghost" disabled>Geri al</button>
+    </div>
+  </header>
+
+  <main id="button-container"></main>
+
+  <div class="bottom">
+    <div class="actions">
+      <button id="finish-button" class="primary">Bitir</button>
+      <button id="download-btn" class="secondary">Excel’e indir (CSV)</button>
+    </div>
+    <div id="result" aria-live="polite"></div>
+  </div>
+
+  <script>
+    // --- 1) Kategoriler ---
+    const kategoriler = [
+      "Plastik kapak",
+      "Plastik şişe",
+      "Sigara izmariti",
+      "Cam şişe",
+      "Metal kutu",
+      "Metal kapak",
+      "Balıkçı ağı",
+      "Ambalaj atığı",
+      "Kağıt atık"
+    ];
+
+    // 9 farklı buton rengi
+    const colors = [
+      "#007bff",
+      "#28a745",
+      "#ff6f00",
+      "#6f42c1",
+      "#e83e8c",
+      "#17a2b8",
+      "#fd7e14",
+      "#20c997",
+      "#dc3545"
+    ];
+
+    // --- 2) Depolama ve durum ---
+    const STORAGE_KEY = "atik_sayac_counts_v2"; // rozetli sürüm
+    const counts = loadCounts() || Object.fromEntries(kategoriler.map(k => [k, 0]));
+    const historyStack = []; // { index: number }
+
+    // --- 3) Elemanlar ---
+    const container = document.getElementById("button-container");
+    const resultDiv = document.getElementById("result");
+    const undoBtn = document.getElementById("undo-btn");
+    const finishBtn = document.getElementById("finish-button");
+    const downloadBtn = document.getElementById("download-btn");
+
+    // --- 4) Butonları oluştur ---
+    const buttonRefs = []; // {btn, badge}
+    kategoriler.forEach((kategori, i) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "cat-btn";
+      btn.style.backgroundColor = colors[i % colors.length];
+      btn.style.borderColor = colors[i % colors.length];
+
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = kategori;
+
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = (counts[kategori] || 0);
+
+      btn.appendChild(label);
+      btn.appendChild(badge);
+
+      btn.addEventListener("click", () => {
+        pressAnimate(btn);
+        vibrateLight();
+        counts[kategori] = (counts[kategori] || 0) + 1;
+        badge.textContent = counts[kategori];
+        historyStack.push({ index: i });
+        updateUndoState();
+        saveCounts();
+      });
+
+      container.appendChild(btn);
+      buttonRefs.push({ btn, badge });
+    });
+
+    updateUndoState();
+
+    // --- 5) Geri al ---
+    undoBtn.addEventListener("click", () => {
+      if (historyStack.length === 0) return;
+      const last = historyStack.pop();
+      const kategori = kategoriler[last.index];
+      if (counts[kategori] > 0) {
+        counts[kategori]--;
+        buttonRefs[last.index].badge.textContent = counts[kategori];
+        saveCounts();
+      }
+      updateUndoState();
+    });
+
+    function updateUndoState(){
+      undoBtn.disabled = historyStack.length === 0;
+    }
+
+    // --- 6) Bitir: sonuçları göster ---
+    finishBtn.addEventListener("click", () => {
+      let output = "Sonuçlar:\n\n";
+      kategoriler.forEach(k => { output += `${k}: ${counts[k] || 0}\n`; });
+      resultDiv.textContent = output;
+    });
+
+    // --- 7) Excel (CSV) indir ---
+    downloadBtn.addEventListener("click", () => {
+      let csv = "Kategori,Sayı\n";
+      kategoriler.forEach(k => { csv += `"${k.replace(/"/g,'""')}",${counts[k] || 0}\n`; });
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const tarih = new Date().toISOString().slice(0,10);
+      a.href = url; a.download = `atik_sayac_${tarih}.csv`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+
+    // --- 8) Basış animasyonu ---
+    function pressAnimate(el){
+      el.classList.add("pressed");
+      setTimeout(() => el.classList.remove("pressed"), 120);
+    }
+
+    // --- 9) Titreşim ---
+    function vibrateLight(){
+      if (navigator.vibrate) navigator.vibrate(15);
+    }
+
+    // --- 10) localStorage ---
+    function saveCounts(){
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(counts)); }catch(e){}
+    }
+    function loadCounts(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+      }catch(e){ return null; }
+    }
+  </script>
+</body>
+</html>
